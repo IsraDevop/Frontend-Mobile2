@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Text } from "react-native-paper";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,14 +18,21 @@ import { EmptyState } from "../../src/components/EmptyState";
 import type { Category } from "../../src/types";
 import { palette, fonts } from "../../src/theme/theme";
 
+const CONDITIONS = [
+  "PSA 10 (Gem Mint)",
+  "PSA 9 (Mint)",
+  "PSA 8 (Near Mint)",
+  "PSA 7 o menor",
+  "Sin gradar (Excelente/Bueno)",
+];
+
 export default function SellScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { showToast } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [photos, setPhotos] = useState<string[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
+  const [conditionOpen, setConditionOpen] = useState(false);
 
   const { data: categories } = useFetch<Category[]>("/categories");
 
@@ -58,12 +65,6 @@ export default function SellScreen() {
     if (uri) setPhotos((p) => [...p, uri]);
   }
 
-  function addTag() {
-    const t = tagInput.trim().toLowerCase();
-    if (t && !tags.includes(t) && tags.length < 6) setTags((prev) => [...prev, t]);
-    setTagInput("");
-  }
-
   async function handleSubmit() {
     const { title, description, mode, fixedPrice, condition, categoryId } = form.values;
     let valid = true;
@@ -84,7 +85,6 @@ export default function SellScreen() {
         fixedPrice: mode === "FIXED" ? Number(fixedPrice) : undefined,
         condition: condition.trim(),
         categoryId,
-        tags,
       });
 
       if (photos.length > 0) {
@@ -149,13 +149,17 @@ export default function SellScreen() {
           onChangeText={(t) => form.setValue("description", t)}
           multiline
         />
-        <Field
-          label="Condición"
-          placeholder="PSA 9 — Mint"
-          value={form.values.condition}
-          onChangeText={(t) => form.setValue("condition", t)}
-          error={form.errors.condition}
-        />
+        <Text style={styles.label}>Condición</Text>
+        <Pressable
+          style={[styles.select, form.errors.condition ? styles.selectError : null]}
+          onPress={() => setConditionOpen(true)}
+        >
+          <Text style={form.values.condition ? styles.selectValue : styles.selectPlaceholder}>
+            {form.values.condition || "Elige la condición"}
+          </Text>
+          <Ionicons name="chevron-down" size={18} color="#9499A3" />
+        </Pressable>
+        {form.errors.condition ? <Text style={styles.fieldError}>{form.errors.condition}</Text> : null}
 
         <Text style={styles.label}>Modo de venta</Text>
         <View style={styles.toggleRow}>
@@ -200,26 +204,6 @@ export default function SellScreen() {
           })}
         </View>
         {form.errors.categoryId ? <Text style={styles.fieldError}>{form.errors.categoryId}</Text> : null}
-
-        <Text style={[styles.label, { marginTop: 16 }]}>Tags</Text>
-        <View style={styles.pills}>
-          {tags.map((t) => (
-            <Pressable key={t} style={styles.tagOn} onPress={() => setTags((prev) => prev.filter((x) => x !== t))}>
-              <Text style={styles.tagOnText}>{t} ✕</Text>
-            </Pressable>
-          ))}
-          <View style={styles.tagInputWrap}>
-            <Field
-              value={tagInput}
-              onChangeText={setTagInput}
-              placeholder="+ tag"
-              onSubmitEditing={addTag}
-              returnKeyType="done"
-              autoCapitalize="none"
-              style={styles.tagInput}
-            />
-          </View>
-        </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -230,6 +214,35 @@ export default function SellScreen() {
           loading={submitting}
         />
       </View>
+
+      <Modal
+        visible={conditionOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConditionOpen(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setConditionOpen(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Condición</Text>
+            {CONDITIONS.map((opt) => {
+              const active = form.values.condition === opt;
+              return (
+                <Pressable
+                  key={opt}
+                  style={styles.modalOption}
+                  onPress={() => {
+                    form.setValue("condition", opt);
+                    setConditionOpen(false);
+                  }}
+                >
+                  <Text style={[styles.modalOptionText, active && styles.modalOptionTextOn]}>{opt}</Text>
+                  {active && <Ionicons name="checkmark" size={18} color={palette.primary} />}
+                </Pressable>
+              );
+            })}
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -269,9 +282,22 @@ const styles = StyleSheet.create({
   pillOff: { backgroundColor: palette.fill },
   pillOnText: { fontFamily: fonts.bold, fontSize: 12, color: "#fff" },
   pillOffText: { fontFamily: fonts.bold, fontSize: 12, color: "#5A5F6A" },
-  tagOn: { backgroundColor: palette.primaryContainer, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 7 },
-  tagOnText: { fontFamily: fonts.mono, fontSize: 12, color: palette.primary },
-  tagInputWrap: { width: 110 },
-  tagInput: { paddingVertical: 6 },
+  select: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    height: 48, borderRadius: 13, borderWidth: 1.5, borderColor: palette.border,
+    backgroundColor: "#fff", paddingHorizontal: 14, marginBottom: 4,
+  },
+  selectError: { borderColor: palette.error },
+  selectValue: { fontFamily: fonts.medium, fontSize: 14, color: palette.textPrimary },
+  selectPlaceholder: { fontFamily: fonts.regular, fontSize: 14, color: "#9499A3" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
+  modalSheet: { backgroundColor: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 18, paddingBottom: 28 },
+  modalTitle: { fontFamily: fonts.extrabold, fontSize: 16, color: palette.textPrimary, marginBottom: 8 },
+  modalOption: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: "#F2F3F6",
+  },
+  modalOptionText: { fontFamily: fonts.bold, fontSize: 14, color: "#5A5F6A" },
+  modalOptionTextOn: { color: palette.primary },
   footer: { padding: 18, backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: palette.borderLight },
 });
