@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  FlatList,
   Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -11,14 +14,14 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../src/context/AuthContext";
 import { liveService } from "../../src/services/liveService";
-import { subscribeLive } from "../../src/realtime/liveSocket";
+import { subscribeLive, subscribeLiveChat } from "../../src/realtime/liveSocket";
 import { ScreenHeader } from "../../src/components/ScreenHeader";
 import { PrimaryButton } from "../../src/components/PrimaryButton";
 import { Loader } from "../../src/components/Loader";
 import { getApiErrorMessage } from "../../src/utils/apiError";
 import { isLiveKitAvailable } from "../../src/utils/liveKit";
 import { palette, fonts } from "../../src/theme/theme";
-import type { FlashAuction, LiveToken } from "../../src/types";
+import type { FlashAuction, LiveComment, LiveToken } from "../../src/types";
 
 const lkAvailable = isLiveKitAvailable();
 
@@ -61,11 +64,18 @@ export default function GoLiveScreen() {
   const [auctionLoading, setAuctionLoading] = useState(false);
   const [auctionError, setAuctionError] = useState<string | null>(null);
   const [endLoading, setEndLoading] = useState(false);
+  const [comments, setComments] = useState<LiveComment[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
   const unsubRef = useRef<(() => void) | null>(null);
+  const chatUnsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     return () => {
       unsubRef.current?.();
+      chatUnsubRef.current?.();
     };
   }, []);
 
@@ -122,12 +132,45 @@ export default function GoLiveScreen() {
         if (msg.type === "LIVE_ENDED") setStreaming(false);
       });
       unsubRef.current = unsub;
+      liveService.listComments(tk.streamId, 30)
+        .then((p) => setComments([...(p.content || [])].reverse()))
+        .catch(() => {});
+      chatUnsubRef.current = await subscribeLiveChat(tk.streamId, (c) =>
+        setComments((prev) => [...prev, c])
+      );
     } catch (e) {
       setStartError(getApiErrorMessage(e));
     } finally {
       setStartLoading(false);
     }
   };
+
+  const sendComment = useCallback(async () => {
+    const text = commentText.trim();
+    if (!streamId || !text || posting) return;
+    setPosting(true);
+    try {
+      await liveService.postComment(streamId, { text });
+      setCommentText("");
+    } catch {
+      // the comment just won't post; keep the text so the host can retry
+    } finally {
+      setPosting(false);
+    }
+  }, [streamId, commentText, posting]);
+
+  const runSummary = useCallback(async () => {
+    if (!streamId || summarizing) return;
+    setSummarizing(true);
+    try {
+      const r = await liveService.summarizeComments(streamId, 80);
+      setSummary(r?.summary || "Sin resumen.");
+    } catch (e) {
+      setSummary(getApiErrorMessage(e));
+    } finally {
+      setSummarizing(false);
+    }
+  }, [streamId, summarizing]);
 
   const handleCreateAuction = useCallback(async () => {
     if (!streamId || !auctionTitle.trim()) {
@@ -176,6 +219,7 @@ export default function GoLiveScreen() {
     try {
       await liveService.end(streamId);
       unsubRef.current?.();
+      chatUnsubRef.current?.();
       router.back();
     } catch (e) {
       setEndLoading(false);
@@ -214,7 +258,7 @@ export default function GoLiveScreen() {
   const auctionActive = auction?.status === "ACTIVE";
 
   return (
-    <View style={styles.flex}>
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScreenHeader title="Transmitiendo en vivo" />
 
       <LiveKitRoom
@@ -278,6 +322,43 @@ export default function GoLiveScreen() {
           </View>
         )}
 
+        <View style={styles.chatPanel}>
+          <View style={styles.chatHd}>
+            <Text style={styles.sectionTitle}>Chat en vivo</Text>
+            <TouchableOpacity style={styles.iaBtn} onPress={runSummary} disabled={summarizing}>
+              <Ionicons name="sparkles-outline" size={14} color={palette.primary} />
+              <Text style={styles.iaBtnText}>{summarizing ? "Resumiendo…" : "Resumir con IA"}</Text>
+            </TouchableOpacity>
+          </View>
+          {summary ? <Text style={styles.summaryText}>{summary}</Text> : null}
+          <FlatList
+            data={comments}
+            keyExtractor={(c) => String(c.id)}
+            style={styles.chatList}
+            renderItem={({ item }) => (
+              <Text style={styles.chatMsg}>
+                <Text style={styles.chatUser}>{item.userName}: </Text>
+                {item.text}
+              </Text>
+            )}
+            ListEmptyComponent={<Text style={styles.chatEmpty}>Aún no hay comentarios.</Text>}
+          />
+          <View style={styles.chatInputRow}>
+            <TextInput
+              style={[styles.input, { flex: 1 }]}
+              value={commentText}
+              onChangeText={setCommentText}
+              placeholder="Escribe un mensaje…"
+              placeholderTextColor={palette.textTertiary}
+              onSubmitEditing={sendComment}
+              returnKeyType="send"
+            />
+            <TouchableOpacity style={styles.chatSend} onPress={sendComment} disabled={posting}>
+              <Ionicons name="send" size={16} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <TouchableOpacity
           style={[styles.actionBtn, styles.endBtn, endLoading && styles.btnDisabled]}
           onPress={handleEnd}
@@ -287,7 +368,7 @@ export default function GoLiveScreen() {
           <Text style={styles.actionBtnText}>{endLoading ? "Terminando…" : "Terminar live"}</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -303,6 +384,17 @@ const styles = StyleSheet.create({
   stagePlaceholder: { backgroundColor: palette.primary, justifyContent: "center", alignItems: "center", gap: 8 },
   stageText: { color: "#fff", fontFamily: fonts.regular, fontSize: 13 },
   controls: { padding: 16, gap: 12 },
+  chatPanel: { backgroundColor: "#fff", borderRadius: 14, padding: 12, borderWidth: 1, borderColor: palette.borderLight, gap: 8 },
+  chatHd: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  iaBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.primaryContainer },
+  iaBtnText: { fontFamily: fonts.bold, fontSize: 12, color: palette.primary },
+  summaryText: { fontFamily: fonts.regular, fontSize: 13, color: palette.textSecondary, lineHeight: 18, backgroundColor: palette.background, borderRadius: 10, padding: 10 },
+  chatList: { maxHeight: 150 },
+  chatMsg: { fontFamily: fonts.regular, fontSize: 13, color: palette.textPrimary, marginBottom: 6, lineHeight: 18 },
+  chatUser: { fontFamily: fonts.bold, color: palette.textPrimary },
+  chatEmpty: { fontFamily: fonts.regular, fontSize: 12, color: palette.textTertiary, paddingVertical: 8 },
+  chatInputRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  chatSend: { width: 42, height: 42, borderRadius: 12, backgroundColor: palette.primary, justifyContent: "center", alignItems: "center" },
   auctionForm: { gap: 10 },
   activeAuction: { gap: 8, backgroundColor: "#fff", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: palette.borderLight },
   sectionTitle: { fontFamily: fonts.bold, fontSize: 14, color: palette.textPrimary },
