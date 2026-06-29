@@ -45,4 +45,8 @@ export const liveService = {
 
   postComment: (id: number, data: PostLiveCommentRequest) =>
     api.post<LiveComment>(`/live/${id}/comments`, data).then((r) => r.data),
+
+  // AI summary of the live comments — host only; not broadcast to viewers.
+  summarizeComments: (id: number, limit = 80) =>
+    api.post<{ summary: string }>(`/live/${id}/comments/summary?limit=${limit}`).then((r) => r.data),
 };
