@@ -178,6 +178,23 @@ export default function LiveDetailScreen() {
     return () => clearInterval(interval);
   }, [numId, ended]);
 
+  // Polling fallback for live state: catches auction start/close missed by STOMP.
+  useEffect(() => {
+    if (!numId || ended) return;
+    const interval = setInterval(async () => {
+      try {
+        const liveData = await liveService.findById(numId);
+        if (liveData.status === "ENDED") {
+          setEnded(true);
+          setAuction(null);
+        } else {
+          setAuction(liveData.activeAuction);
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [numId, ended]);
+
   const handleComment = useCallback(async () => {
     if (!chatInput.trim() || commentLoading) return;
     Keyboard.dismiss();
