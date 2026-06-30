@@ -108,6 +108,7 @@ export default function LiveDetailScreen() {
   const [commentLoading, setCommentLoading] = useState(false);
   const [bidError, setBidError] = useState<string | null>(null);
   const [customMode, setCustomMode] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
   const chatRef = useRef<FlatList>(null);
   const unsubRefs = useRef<Array<() => void>>([]);
 
@@ -194,6 +195,14 @@ export default function LiveDetailScreen() {
     }, 5000);
     return () => clearInterval(interval);
   }, [numId, ended]);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvt, (e) => setKeyboardOffset(e.endCoordinates.height));
+    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardOffset(0));
+    return () => { onShow.remove(); onHide.remove(); };
+  }, []);
 
   const handleComment = useCallback(async () => {
     if (!chatInput.trim() || commentLoading) return;
@@ -291,7 +300,7 @@ export default function LiveDetailScreen() {
     return (
       <KeyboardAvoidingView
         style={styles.immersiveRoot}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={undefined}
       >
         {/* Full-screen video background */}
         <View style={StyleSheet.absoluteFill}>
@@ -321,7 +330,10 @@ export default function LiveDetailScreen() {
         </View>
 
         {/* Bottom overlay: chat + auction card + comment bar */}
-        <View style={[styles.immersiveBottom, { paddingBottom: insets.bottom + 6 }]}>
+        <View style={[styles.immersiveBottom, {
+          bottom: keyboardOffset,
+          paddingBottom: keyboardOffset > 0 ? 6 : insets.bottom + 6,
+        }]}>
           {/* Last 5 chat messages overlaid (non-interactive) */}
           {comments.length > 0 && (
             <View style={styles.immersiveChatOverlay} pointerEvents="none">
@@ -462,7 +474,7 @@ export default function LiveDetailScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior="padding"
     >
       <ScreenHeader title="Transmisión en vivo" />
 
